@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -9,6 +9,8 @@ type ScanResult = {
   fileSize: number;
   pageCount: number;
   isValid: boolean;
+  isEncrypted: boolean;
+  hasInteractiveElements: boolean;
 };
 
 type ProcessOutcome = {
@@ -51,6 +53,7 @@ function App() {
   const [progress, setProgress] = useState("");
   const [outcome, setOutcome] = useState<ProcessOutcome | null>(null);
   const [error, setError] = useState("");
+  const jobIdRef = useRef<string>("");
 
   useEffect(() => {
     const un = listen<{ tryingDpi?: number } | string>("compress-progress", (e) => {
@@ -91,6 +94,8 @@ function App() {
     setError("");
     setOutcome(null);
     setProgress("Iniciando…");
+    const jobId = crypto.randomUUID();
+    jobIdRef.current = jobId;
     try {
       const request = {
         inputPaths: [scan.path],
@@ -102,13 +107,19 @@ function App() {
         originalTotalSize: scan.fileSize,
         expectedPageCount: scan.pageCount,
       };
-      const o = await invoke<ProcessOutcome>("process_pdfs", { request });
+      const o = await invoke<ProcessOutcome>("process_pdfs", { jobId, request });
       setOutcome(o);
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
       setProgress("");
+    }
+  }
+
+  async function cancelJob() {
+    if (jobIdRef.current) {
+      await invoke("cancel_process", { jobId: jobIdRef.current });
     }
   }
 
@@ -127,6 +138,14 @@ function App() {
             <div>
               {fmtBytes(scan.fileSize)} · {scan.pageCount} páginas
             </div>
+          </div>
+        )}
+        {scan && (scan.isEncrypted || scan.hasInteractiveElements) && (
+          <div className="warn">
+            {scan.isEncrypted && <div>🔒 PDF cifrado/protegido: la compresión puede fallar.</div>}
+            {scan.hasInteractiveElements && (
+              <div>📝 Contiene formularios/campos interactivos: podrían alterarse al recomprimir.</div>
+            )}
           </div>
         )}
       </div>
@@ -148,7 +167,14 @@ function App() {
           <button className="primary" onClick={compress} disabled={busy}>
             {busy ? "Procesando…" : `Crear PDF menor de ${targetMb} MB`}
           </button>
-          {busy && <div className="progress">{progress}</div>}
+          {busy && (
+            <div className="progress">
+              {progress}
+              <button className="cancel" onClick={cancelJob}>
+                Cancelar
+              </button>
+            </div>
+          )}
         </div>
       )}
 

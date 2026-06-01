@@ -2,7 +2,7 @@
 //! Uso: cargo run --example smoke -- <input.pdf> <target_mb>
 //! No forma parte de `cargo test` (es un example), así que no rompe CI.
 
-use pdf_core::{process, Action, CompressionPreset, ProcessRequest};
+use pdf_core::{process, Action, CancelToken, CompressionPreset, ProcessRequest};
 use std::path::PathBuf;
 
 fn main() {
@@ -34,7 +34,7 @@ fn main() {
         original_size, expected_pages, target_mb
     );
 
-    match process(&req, |p| println!("  progreso: {:?}", p)) {
+    match process(&req, &CancelToken::new(), |p| println!("  progreso: {:?}", p)) {
         Ok(o) => {
             println!("--- OUTCOME ---");
             println!("output:        {}", o.output_path.display());

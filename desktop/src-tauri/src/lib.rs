@@ -1,52 +1,59 @@
-use pdf_core::{process, ProcessOutcome, ProcessRequest};
-use serde::Serialize;
-use std::path::PathBuf;
-use tauri::{Emitter, Window};
+use pdf_core::{process, scan, CancelToken, ProcessOutcome, ProcessRequest, ScanResult};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+use tauri::{Emitter, State, Window};
 
-/// Resultado de escanear un PDF para la UI (tamaño + páginas).
-/// Versión mínima de Fase 1; la detección de cifrado/interactivos llega en Fase 2.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ScanResult {
-    path: String,
-    file_size: u64,
-    page_count: u32,
-    is_valid: bool,
-}
+/// Registro de trabajos en curso para poder cancelarlos por id.
+#[derive(Default)]
+struct Jobs(Mutex<HashMap<String, CancelToken>>);
 
+/// Escanea un PDF: tamaño, páginas, validez, cifrado e interactividad.
 #[tauri::command]
 fn scan_pdf(path: String) -> ScanResult {
-    let p = PathBuf::from(&path);
-    let file_size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-    match pdf_core::pdf::page_count(&p) {
-        Ok(page_count) => ScanResult { path, file_size, page_count, is_valid: true },
-        Err(_) => ScanResult { path, file_size, page_count: 0, is_valid: false },
-    }
+    scan(Path::new(&path))
 }
 
-/// Procesa la petición en un hilo bloqueante para no congelar la UI,
-/// emitiendo eventos `compress-progress` a la ventana.
+/// Procesa (comprime o une+comprime) en un hilo bloqueante para no congelar la
+/// UI, emitiendo eventos `compress-progress`. Registra un token cancelable.
 #[tauri::command]
 async fn process_pdfs(
     window: Window,
+    jobs: State<'_, Jobs>,
+    job_id: String,
     request: ProcessRequest,
 ) -> Result<ProcessOutcome, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        process(&request, move |p| {
+    let token = CancelToken::new();
+    jobs.0.lock().unwrap().insert(job_id.clone(), token.clone());
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        process(&request, &token, move |p| {
             let _ = window.emit("compress-progress", p);
         })
         .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string());
+
+    jobs.0.lock().unwrap().remove(&job_id);
+    result?
+}
+
+/// Cancela un trabajo en curso por su id.
+#[tauri::command]
+fn cancel_process(jobs: State<'_, Jobs>, job_id: String) {
+    if let Some(token) = jobs.0.lock().unwrap().get(&job_id) {
+        token.cancel();
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(Jobs::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![scan_pdf, process_pdfs])
+        .invoke_handler(tauri::generate_handler![scan_pdf, process_pdfs, cancel_process])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

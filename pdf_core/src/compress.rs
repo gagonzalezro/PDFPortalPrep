@@ -1,11 +1,14 @@
+use crate::cancel::CancelToken;
 use crate::error::PdfError;
 use crate::ghostscript;
+use crate::merge;
 use crate::models::*;
 use crate::pdf;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Resultado intermedio de la escalera de compresión.
+#[derive(Debug)]
 struct CompressStats {
     final_size: u64,
     applied_dpi: Option<u32>,
@@ -43,6 +46,7 @@ fn run_ladder<F>(
     target_bytes: u64,
     ladder: &[u32],
     output: &Path,
+    cancel: &CancelToken,
     copy_original: &dyn Fn(&Path) -> Result<(), PdfError>,
     mut step: F,
     mut progress: impl FnMut(Progress),
@@ -54,6 +58,7 @@ where
     let mut hit_floor = false;
 
     for (i, &dpi) in ladder.iter().enumerate() {
+        cancel.check()?; // cancelación antes de cada peldaño (espejo de `:119`)
         progress(Progress::TryingDpi(dpi));
         let step_path = temp_step_path();
         let _ = fs::remove_file(&step_path);
@@ -103,51 +108,80 @@ where
 }
 
 /// Punto de entrada principal. Espejo de `PDFProcessingService.process`.
-/// Fase 1: solo compresión de un único PDF (merge llega en Fase 2).
+/// Soporta compresión simple y unir+comprimir, con cancelación.
 pub fn process(
     req: &ProcessRequest,
+    cancel: &CancelToken,
     mut progress: impl FnMut(Progress),
 ) -> Result<ProcessOutcome, PdfError> {
     if req.input_paths.is_empty() {
         return Err(PdfError::NoInput);
     }
-    if matches!(req.action, Action::MergeAndCompress) || req.input_paths.len() > 1 {
-        return Err(PdfError::NotImplemented(
-            "merge de múltiples PDFs (Fase 2)".into(),
-        ));
-    }
+    cancel.check()?;
 
-    let gs = ghostscript::locate().ok_or(PdfError::GhostscriptNotFound)?;
-    let input = &req.input_paths[0];
-    let input_size = fs::metadata(input)?.len();
+    // Preparar la fuente: archivo único, o el resultado del merge (temporal).
+    let (source, source_is_temp) = match req.action {
+        Action::CompressSingle => {
+            if req.input_paths.len() != 1 {
+                return Err(PdfError::InvalidPdf(
+                    "la compresión simple requiere exactamente un PDF".into(),
+                ));
+            }
+            (req.input_paths[0].clone(), false)
+        }
+        Action::MergeAndCompress => {
+            progress(Progress::Merging);
+            let combined = std::env::temp_dir()
+                .join(format!("pdfportalprep-{}-combined.pdf", uuid::Uuid::new_v4()));
+            merge::merge(&req.input_paths, &combined, cancel)?;
+            (combined, true)
+        }
+    };
+
+    let result = compress_source(&source, req, cancel, &mut progress);
+    if source_is_temp {
+        let _ = fs::remove_file(&source);
+    }
+    result
+}
+
+/// Comprime una fuente ya preparada (single o merged) y construye el Outcome.
+fn compress_source(
+    source: &Path,
+    req: &ProcessRequest,
+    cancel: &CancelToken,
+    progress: &mut impl FnMut(Progress),
+) -> Result<ProcessOutcome, PdfError> {
+    let source_size = fs::metadata(source)?.len();
     let output = unique_output_path(&req.output_dir, &req.base_name);
 
-    let stats = if input_size <= req.target_bytes {
+    let stats = if source_size <= req.target_bytes {
         // Ya está bajo el límite: copiar sin recomprimir.
-        fs::copy(input, &output)?;
+        fs::copy(source, &output)?;
         CompressStats {
-            final_size: input_size,
+            final_size: source_size,
             applied_dpi: None,
             kept_original: true,
             hit_floor_without_meeting: false,
         }
     } else {
+        let gs = ghostscript::locate().ok_or(PdfError::GhostscriptNotFound)?;
         let jpeg_q = req.preset.jpeg_quality();
-        let gs_ref = &gs;
         run_ladder(
-            input_size,
+            source_size,
             req.target_bytes,
             req.preset.dpi_ladder(),
             &output,
+            cancel,
             &|out: &Path| {
-                fs::copy(input, out)?;
+                fs::copy(source, out)?;
                 Ok(())
             },
             |dpi, path| {
-                ghostscript::compress_at_dpi(gs_ref, input, path, dpi, jpeg_q)?;
+                ghostscript::compress_at_dpi(&gs, source, path, dpi, jpeg_q)?;
                 Ok(fs::metadata(path)?.len())
             },
-            &mut progress,
+            &mut *progress,
         )?
     };
 
@@ -216,6 +250,7 @@ mod tests {
             400,
             &[220, 180, 150],
             &out,
+            &CancelToken::new(),
             &|o| write_sized(o, 4).map(|_| ()),
             |dpi, p| {
                 tried.push(dpi);
@@ -248,6 +283,7 @@ mod tests {
             100, // target inalcanzable
             &[220, 180, 150],
             &out,
+            &CancelToken::new(),
             &|o| write_sized(o, 4).map(|_| ()),
             |dpi, p| {
                 let s = match dpi {
@@ -277,6 +313,7 @@ mod tests {
             100,
             &[220, 180, 150],
             &out,
+            &CancelToken::new(),
             &|o| write_sized(o, 1000).map(|_| ()), // "original"
             |dpi, p| {
                 // Todos los pasos salen MÁS grandes que el input.
@@ -295,6 +332,27 @@ mod tests {
         assert_eq!(stats.applied_dpi, None);
         assert!(stats.kept_original);
         assert!(!stats.hit_floor_without_meeting);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn cancelled_before_ladder_returns_error() {
+        let dir = tmp_dir();
+        let out = dir.join("out.pdf");
+        let token = CancelToken::new();
+        token.cancel();
+        let err = run_ladder(
+            1000,
+            100,
+            &[220, 180, 150],
+            &out,
+            &token,
+            &|o| write_sized(o, 4).map(|_| ()),
+            |_dpi, p| write_sized(p, 50),
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(matches!(err, PdfError::Cancelled));
         fs::remove_dir_all(&dir).ok();
     }
 

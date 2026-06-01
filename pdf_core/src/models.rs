@@ -82,6 +82,18 @@ pub struct ProcessOutcome {
     pub engine_label: String,
 }
 
+/// Resultado de escanear un PDF. Espejo de `PDFValidationService.ScanResult`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanResult {
+    pub path: PathBuf,
+    pub file_size: u64,
+    pub page_count: u32,
+    pub is_valid: bool,
+    pub is_encrypted: bool,
+    pub has_interactive_elements: bool,
+}
+
 /// Estados de progreso emitidos durante el procesamiento.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
