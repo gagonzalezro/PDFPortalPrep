@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PDF Portal Prep",
+  "version": "0.1.0",
+  "identifier": "com.gustavogonzalez.pdfportalprep",
+  "build": {
+    "beforeDevCommand": "node_modules/.bin/vite",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "node_modules/.bin/tsc && node_modules/.bin/vite build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "PDF Portal Prep",
+        "width": 900,
+        "height": 680
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
