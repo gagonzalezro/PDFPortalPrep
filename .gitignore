@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager / Xcode
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserdata/
+xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Build outputs
+dist/
+*.app/
+*.dSYM/
+
+# Local secrets and OAuth credentials
+client_secret_*.json
+Resources/GoogleOAuth.plist
+
+# Local environment/config overrides
+.env
+.env.*
+!.env.example
