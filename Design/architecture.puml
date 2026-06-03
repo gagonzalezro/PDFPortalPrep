@@ -1,0 +1,44 @@
+@startuml architecture
+title PDF Portal Prep - Arquitectura multiplataforma
+
+skinparam backgroundColor #FAF7F2
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor Usuario
+
+package "Distribucion actual" {
+  component "Desktop UI\nReact 19 + TypeScript" as ReactUI
+  component "Shell nativo\nTauri v2" as TauriShell
+  component "Comandos\nscan_pdf / process_pdfs / cancel_process" as TauriCommands
+  component "pdf_core\nRust" as PdfCore
+}
+
+package "Servicios externos" {
+  component "Ghostscript\nCompresion PDF" as Ghostscript
+  component "Sistema de archivos" as FileSystem
+}
+
+package "Referencia legado macOS" {
+  component "SwiftUI App" as SwiftUIApp
+  component "Services/*\nPDFProcessingService\nPDFCompressionService\nPDFMergeService\nPDFValidationService" as SwiftServices
+}
+
+Usuario --> ReactUI : Selecciona PDF\nconfigura limite\ninicia/cancela
+ReactUI --> TauriShell : invoke/listen
+TauriShell --> TauriCommands
+TauriCommands --> PdfCore : ProcessRequest / ScanResult
+PdfCore --> Ghostscript : gs / gswin64c.exe
+PdfCore --> FileSystem : leer/escribir PDFs
+
+SwiftUIApp --> SwiftServices : Implementacion original
+SwiftServices ..> PdfCore : contrato funcional equivalente
+
+note right of PdfCore
+Windows y macOS comparten esta ruta.
+La app Swift queda como referencia de comportamiento.
+end note
+
+@enduml

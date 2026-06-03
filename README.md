@@ -15,12 +15,18 @@ El repositorio contiene **dos implementaciones conviviendo durante la migración
 
 | Implementación | Stack | Ubicación | Estado |
 |---|---|---|---|
-| App original | SwiftUI · macOS 14+ · PDFKit | raíz (`Views/`, `Services/`, `Models/`) | Funcional |
-| Migración | Tauri v2 · React 19 + TS · núcleo Rust | `desktop/` + `pdf_core/` | Fase 2 en curso |
+| App original | SwiftUI · macOS 14+ · PDFKit | raíz (`Views/`, `Services/`, `Models/`) | Legado de referencia |
+| App de escritorio | Tauri v2 · React 19 + TS · núcleo Rust | `desktop/` + `pdf_core/` | Ruta activa para Windows y macOS |
 
 El crate **`pdf_core`** es un espejo en Rust de la lógica de los `Services/` Swift (compresión,
 merge y validación). La escalera DPI y la calidad JPEG son un contrato congelado: la app nueva
 debe igualar bit a bit el comportamiento de la original.
+
+## Ruta recomendada por plataforma
+
+- **Windows**: usar la app Tauri de `desktop/`. El código Swift raíz sigue siendo macOS-only.
+- **macOS**: para distribución nueva, usar también la app Tauri. La app Swift queda como referencia funcional durante la migración.
+- **Núcleo compartido**: `pdf_core/` ya localiza Ghostscript tanto en rutas Unix como en instalaciones típicas de Windows (`gswin64c.exe`, `gswin32c.exe`, `gs.exe`).
 
 ## Perfiles de compresión
 
@@ -51,9 +57,11 @@ debe igualar bit a bit el comportamiento de la original.
 
 ## Requisitos
 
-- **Ghostscript** (`gs`) en el `PATH` — motor de compresión, imprescindible en ambas apps.
+- **Ghostscript** en el `PATH` — `gs` en macOS/Linux, `gswin64c.exe`/`gswin32c.exe`/`gs.exe` en Windows.
+    En esta máquina Windows también quedó validada la ruta local `C:\Users\Wilme\AppData\Local\Ghostscript\bin\gswin64c.exe`.
 - App Swift: macOS 14+ y Xcode / Swift 6 toolchain.
-- Migración Tauri: Rust (rustup) y Node + pnpm.
+- Migración Tauri: Rust (rustup), Node.js LTS y pnpm.
+- Validado en este repo sobre Windows con `cargo` en `C:\Users\Wilme\.cargo\bin\cargo.exe` y Node.js `v24.16.0`.
 
 ## Ejecutar
 
@@ -73,6 +81,45 @@ npm install
 npm run tauri dev     # desarrollo
 npm run tauri build   # build de producción
 ```
+
+Para Windows, el flujo validado en este repo usa los scripts de `Scripts/` desde la raíz del proyecto.
+
+## Instaladores
+
+Los instaladores nativos se generan desde `desktop/` con Tauri v2:
+
+- **Windows**: `powershell -ExecutionPolicy Bypass -File .\Scripts\build-windows-installer.ps1`
+- **Instalar MSI en Windows**: `powershell -ExecutionPolicy Bypass -File .\Scripts\install-windows-msi.ps1`
+- **macOS**: `bash ./Scripts/build-macos-installer.sh`
+
+El script de Windows usa `desktop/node_modules/.bin/tauri.cmd` como ruta preferida y solo intenta usar `pnpm` si falta la instalación local de dependencias. El script de macOS valida que se ejecute en una Mac real, que `xcodebuild` este disponible y que el bundle se genere usando `desktop/node_modules/.bin/tauri`, que es la misma ruta de build validada para Windows.
+
+Salida esperada:
+
+- Windows: `desktop/src-tauri/target/release/bundle/msi/` y `desktop/src-tauri/target/release/bundle/nsis/`
+- macOS: `desktop/src-tauri/target/release/bundle/macos/` y `bundle/dmg/`
+
+Artefactos comprobados actualmente en este workspace:
+
+- `desktop/src-tauri/target/release/bundle/msi/PDF Portal Prep_0.1.0_x64_en-US.msi`
+- `desktop/src-tauri/target/release/bundle/nsis/PDF Portal Prep_0.1.0_x64-setup.exe`
+
+Validación operativa en Windows:
+
+- El smoke test real de `pdf_core/` ya se ejecutó con Ghostscript en Windows para compresión y merge.
+- El helper `Scripts/install-windows-msi.ps1` quedó validado y la instalación MSI se registró correctamente.
+- En esta máquina, el MSI quedó instalado en `C:\Users\Wilme\AppData\Local\PDF Portal Prep\`.
+- El ejecutable instalado verificado es `C:\Users\Wilme\AppData\Local\PDF Portal Prep\desktop.exe`.
+
+> Nota: no es posible generar un `.dmg` válido desde Windows ni un `.msi` nativo desde macOS sin una cadena de build de ese sistema operativo.
+
+## Diseño
+
+Los diagramas PlantUML del sistema viven en `Design/`:
+
+- `Design/architecture.puml` y `Design/architecture.png`
+- `Design/class-diagram.puml` y `Design/class-diagram.png`
+- `Design/macos-release-checklist.md` para firma y notarización del release macOS
 
 > ⚠️ En `desktop/` `npm` está aliaseado a `pnpm` en modo estricto. Si aparece
 > `ERR_PNPM_IGNORED_BUILDS`, ver las notas de `desktop/README.md` (se invocan los

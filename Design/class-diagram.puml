@@ -1,0 +1,97 @@
+@startuml class-diagram
+title PDF Portal Prep - Diagrama de clases y tipos principales
+
+skinparam backgroundColor #FFFDF8
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam classAttributeIconSize 0
+
+package "Legacy Swift" {
+  class PDFPortalPrepApp
+  class ContentView
+  class PDFProcessingService {
+    +process(request, progress)
+    +cancel()
+  }
+  class PDFCompressionService {
+    +compress(inputURL, outputURL, dpi, jpegQuality)
+    +compressWithQuartz(inputURL, outputURL, dpi, jpegQuality)
+    +engineDescription()
+  }
+  class GhostscriptLocator {
+    +locate()
+  }
+  class PDFMergeService {
+    +merge(files, to)
+  }
+  class PDFValidationService {
+    +scan(url)
+  }
+  enum CompressionPreset
+  enum VisualQualityImpact
+  class CompressionResult
+}
+
+package "Desktop Tauri" {
+  class AppTsx {
+    +pickFile()
+    +compress()
+    +cancelJob()
+  }
+  class Jobs
+}
+
+package "Rust Core" {
+  class ProcessRequest
+  class ProcessOutcome
+  class ScanResult
+  enum Action
+  enum Progress
+  enum CompressionPresetRust
+  class CancelToken
+  class GhostscriptRust {
+    +locate()
+    +compress_at_dpi(gs, input, output, dpi, jpeg_quality)
+    +engine_label()
+  }
+  class CompressModule {
+    +process(req, cancel, progress)
+  }
+  class MergeModule {
+    +merge(inputs, output, cancel)
+  }
+  class ValidateModule {
+    +scan(path)
+    +is_encrypted(doc)
+    +has_interactive_elements(doc)
+  }
+}
+
+PDFPortalPrepApp --> ContentView
+ContentView --> PDFProcessingService
+PDFProcessingService --> PDFCompressionService
+PDFProcessingService --> PDFMergeService
+PDFProcessingService --> PDFValidationService
+PDFProcessingService --> CompressionPreset
+PDFProcessingService --> CompressionResult
+PDFCompressionService --> GhostscriptLocator
+CompressionResult --> VisualQualityImpact
+
+AppTsx --> ProcessRequest : construye payload
+AppTsx --> ProcessOutcome : muestra resultado
+Jobs --> CancelToken
+CompressModule --> ProcessRequest
+CompressModule --> ProcessOutcome
+CompressModule --> CompressionPresetRust
+CompressModule --> GhostscriptRust
+CompressModule --> MergeModule
+CompressModule --> ValidateModule
+CompressModule --> CancelToken
+ValidateModule --> ScanResult
+
+CompressionPreset .. CompressionPresetRust : mismo contrato DPI/JPEG
+PDFProcessingService .. CompressModule : paridad funcional
+PDFValidationService .. ValidateModule : paridad funcional
+PDFMergeService .. MergeModule : paridad funcional
+
+@enduml
